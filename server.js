@@ -28,7 +28,7 @@ app.get("/api/train-times", async (req, res) => {
   }
 
   try {
-    const url = `${NS_API_BASE}/departures?station=${encodeURIComponent(station)}&maxJourneys=15`;
+    const url = `${NS_API_BASE}/departures?station=${encodeURIComponent(station)}&maxJourneys=40`;
 
     const response = await fetch(url, {
       headers: {
@@ -69,8 +69,13 @@ app.get("/api/train-times", async (req, res) => {
       const delayMs = actual ? actual.getTime() - planned.getTime() : 0;
       const delayMinutes = Math.max(0, Math.round(delayMs / 60000));
 
-      const hours = String(planned.getHours()).padStart(2, "0");
-      const minutes = String(planned.getMinutes()).padStart(2, "0");
+      const dutch = planned.toLocaleTimeString("nl-NL", {
+        timeZone: "Europe/Amsterdam",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+      const [hours, minutes] = dutch.split(":");
 
       return {
         planned_time: `${hours}:${minutes}`,
