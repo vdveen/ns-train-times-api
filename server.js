@@ -5,6 +5,10 @@ const PORT = process.env.PORT || 3000;
 
 const NS_API_KEY = process.env.NS_API_KEY;
 const STATION = process.env.STATION || "AMF"; // Default: Amersfoort Centraal
+const DELAY = process.env.DELAY ? parseInt(process.env.DELAY, 10) : 0;
+const DESTINATION_FILTER = process.env.DESTINATION_FILTER
+  ? process.env.DESTINATION_FILTER.split(",").map((d) => d.trim().toLowerCase())
+  : [];
 
 const NS_API_BASE = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2";
 
@@ -43,7 +47,20 @@ app.get("/api/train-times", async (req, res) => {
     }
 
     const data = await response.json();
-    const departures = data.payload?.departures || [];
+    let departures = data.payload?.departures || [];
+
+    if (DELAY > 0) {
+      const cutoff = new Date(Date.now() + DELAY * 60000);
+      departures = departures.filter(
+        (dep) => new Date(dep.plannedDateTime) >= cutoff
+      );
+    }
+
+    if (DESTINATION_FILTER.length > 0) {
+      departures = departures.filter(
+        (dep) => !DESTINATION_FILTER.includes((dep.direction || "").toLowerCase())
+      );
+    }
 
     const trains = departures.map((dep) => {
       const planned = new Date(dep.plannedDateTime);
