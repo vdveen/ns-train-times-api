@@ -97,9 +97,24 @@ app.get("/api/train-times", async (req, res) => {
   }
 });
 
+function shortenCategory(raw) {
+  if (!raw) return "Trein";
+  const lower = raw.toLowerCase();
+  if (lower.includes("intercity direct")) return "ICD";
+  if (lower.includes("intercity")) return "IC";
+  if (lower.includes("sprinter")) return "SPR";
+  if (lower.includes("ice")) return "ICE";
+  return raw;
+}
+
+function isSprinter(raw) {
+  return (raw || "").toLowerCase().includes("sprinter");
+}
+
 app.get("/api/first-intercity", async (req, res) => {
-  const station = req.query.station || STATION;
-  const via = (req.query.via ?? "Hilversum").toLowerCase();
+  const station = (req.query.station || STATION).toUpperCase();
+  const via = req.query.via ?? "Hilversum";
+  const viaFilter = via.toLowerCase();
 
   if (!NS_API_KEY) {
     return res.status(500).json({ error: "NS_API_KEY not configured" });
@@ -128,11 +143,11 @@ app.get("/api/first-intercity", async (req, res) => {
     let departures = data.payload?.departures || [];
 
     departures = departures.filter((d) => d.product?.type !== "BUS");
-    departures = departures.filter((d) => d.product?.shortCategoryName !== "SPR");
-    if (via) {
+    departures = departures.filter((d) => !isSprinter(d.product?.shortCategoryName));
+    if (viaFilter) {
       departures = departures.filter((d) =>
         (d.routeStations || []).some(
-          (rs) => (rs.mediumName || "").toLowerCase() === via
+          (rs) => (rs.mediumName || "").toLowerCase() === viaFilter
         )
       );
     }
@@ -161,7 +176,7 @@ app.get("/api/first-intercity", async (req, res) => {
     const [hours, minutes] = dutch.split(":");
     const plannedTime = `${hours}:${minutes}`;
 
-    const category = first.product?.shortCategoryName || "Trein";
+    const category = shortenCategory(first.product?.shortCategoryName);
     const direction = first.direction || "Onbekend";
     const cancelled = first.cancelled || false;
     const track = first.actualTrack || first.plannedTrack || "";
