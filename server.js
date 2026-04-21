@@ -97,6 +97,101 @@ app.get("/api/train-times", async (req, res) => {
   }
 });
 
+app.get("/api/first-intercity", async (req, res) => {
+  const station = req.query.station || STATION;
+  const via = (req.query.via ?? "Hilversum").toLowerCase();
+
+  if (!NS_API_KEY) {
+    return res.status(500).json({ error: "NS_API_KEY not configured" });
+  }
+
+  try {
+    const url = `${NS_API_BASE}/departures?station=${encodeURIComponent(station)}&maxJourneys=40`;
+
+    const response = await fetch(url, {
+      headers: {
+        "Cache-Control": "no-cache",
+        "Ocp-Apim-Subscription-Key": NS_API_KEY,
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return res.status(response.status).json({
+        error: "NS API request failed",
+        status: response.status,
+        detail: text,
+      });
+    }
+
+    const data = await response.json();
+    let departures = data.payload?.departures || [];
+
+    departures = departures.filter((d) => d.product?.type !== "BUS");
+    departures = departures.filter((d) => d.product?.shortCategoryName !== "SPR");
+    if (via) {
+      departures = departures.filter((d) =>
+        (d.routeStations || []).some(
+          (rs) => (rs.mediumName || "").toLowerCase() === via
+        )
+      );
+    }
+
+    const first = departures[0];
+    if (!first) {
+      return res.json({
+        message: `Geen intercity via ${via || "..."} gevonden`,
+        station,
+        via,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    const planned = new Date(first.plannedDateTime);
+    const actual = first.actualDateTime ? new Date(first.actualDateTime) : null;
+    const delayMs = actual ? actual.getTime() - planned.getTime() : 0;
+    const delayMinutes = Math.max(0, Math.round(delayMs / 60000));
+
+    const dutch = planned.toLocaleTimeString("nl-NL", {
+      timeZone: "Europe/Amsterdam",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const [hours, minutes] = dutch.split(":");
+    const plannedTime = `${hours}:${minutes}`;
+
+    const category = first.product?.shortCategoryName || "Trein";
+    const direction = first.direction || "Onbekend";
+    const cancelled = first.cancelled || false;
+    const track = first.actualTrack || first.plannedTrack || "";
+
+    let message;
+    if (cancelled) {
+      message = `${category} ${direction} rijdt niet`;
+    } else if (delayMinutes >= 1) {
+      message = `${category} ${direction} rijdt plus ${delayMinutes}`;
+    } else {
+      message = `${category} ${direction} rijdt om ${plannedTime}`;
+    }
+
+    res.json({
+      category,
+      direction,
+      planned_time: plannedTime,
+      delay_minutes: delayMinutes,
+      cancelled,
+      track,
+      message,
+      updated_at: new Date().toISOString(),
+      station,
+      via,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch first intercity", detail: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Train times API running on port ${PORT}`);
 });
