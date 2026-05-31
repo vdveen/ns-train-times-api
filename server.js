@@ -111,6 +111,46 @@ function isSprinter(raw) {
   return (raw || "").toLowerCase().includes("sprinter");
 }
 
+function describeDeparture(dep) {
+  const planned = new Date(dep.plannedDateTime);
+  const actual = dep.actualDateTime ? new Date(dep.actualDateTime) : null;
+  const delayMs = actual ? actual.getTime() - planned.getTime() : 0;
+  const delayMinutes = Math.max(0, Math.round(delayMs / 60000));
+
+  const dutch = planned.toLocaleTimeString("nl-NL", {
+    timeZone: "Europe/Amsterdam",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const [hours, minutes] = dutch.split(":");
+  const plannedTime = `${hours}:${minutes}`;
+
+  const category = shortenCategory(dep.product?.shortCategoryName);
+  const direction = dep.direction || "Onbekend";
+  const cancelled = dep.cancelled || false;
+  const track = dep.actualTrack || dep.plannedTrack || "";
+
+  let message;
+  if (cancelled) {
+    message = `${category} ${direction} rijdt niet`;
+  } else if (delayMinutes >= 1) {
+    message = `${category} ${direction} rijdt plus ${delayMinutes}`;
+  } else {
+    message = `${category} ${direction} rijdt om ${plannedTime}`;
+  }
+
+  return {
+    category,
+    direction,
+    planned_time: plannedTime,
+    delay_minutes: delayMinutes,
+    cancelled,
+    track,
+    message,
+  };
+}
+
 app.get("/api/first-intercity", async (req, res) => {
   const station = (req.query.station || STATION).toUpperCase();
   const via = req.query.via ?? "Hilversum";
@@ -162,42 +202,23 @@ app.get("/api/first-intercity", async (req, res) => {
       });
     }
 
-    const planned = new Date(first.plannedDateTime);
-    const actual = first.actualDateTime ? new Date(first.actualDateTime) : null;
-    const delayMs = actual ? actual.getTime() - planned.getTime() : 0;
-    const delayMinutes = Math.max(0, Math.round(delayMs / 60000));
+    const firstTrain = describeDeparture(first);
+    const second = departures[1];
+    const secondTrain = second ? describeDeparture(second) : null;
 
-    const dutch = planned.toLocaleTimeString("nl-NL", {
-      timeZone: "Europe/Amsterdam",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-    const [hours, minutes] = dutch.split(":");
-    const plannedTime = `${hours}:${minutes}`;
-
-    const category = shortenCategory(first.product?.shortCategoryName);
-    const direction = first.direction || "Onbekend";
-    const cancelled = first.cancelled || false;
-    const track = first.actualTrack || first.plannedTrack || "";
-
-    let message;
-    if (cancelled) {
-      message = `${category} ${direction} rijdt niet`;
-    } else if (delayMinutes >= 1) {
-      message = `${category} ${direction} rijdt plus ${delayMinutes}`;
-    } else {
-      message = `${category} ${direction} rijdt om ${plannedTime}`;
-    }
+    const message = secondTrain
+      ? `${firstTrain.message}; ${secondTrain.message}`
+      : firstTrain.message;
 
     res.json({
-      category,
-      direction,
-      planned_time: plannedTime,
-      delay_minutes: delayMinutes,
-      cancelled,
-      track,
+      category: firstTrain.category,
+      direction: firstTrain.direction,
+      planned_time: firstTrain.planned_time,
+      delay_minutes: firstTrain.delay_minutes,
+      cancelled: firstTrain.cancelled,
+      track: firstTrain.track,
       message,
+      next_train: secondTrain,
       updated_at: new Date().toISOString(),
       station,
       via,
