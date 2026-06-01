@@ -177,6 +177,42 @@ function isSprinter(raw) {
   return (raw || "").toLowerCase().includes("sprinter");
 }
 
+// Display abbreviations for destinations, using NS's own station codes so long
+// names ("Amersfoort Schothorst") shrink to something scannable ("Amfs").
+// Source: the official NS station-code list. Unknown destinations (e.g. foreign
+// stations like "Hannover Hbf") are left untouched.
+const STATION_CODES = {
+  "amsterdam centraal": "Asd",
+  "amsterdam zuid": "Asdz",
+  "amsterdam sloterdijk": "Ass",
+  "amsterdam amstel": "Asa",
+  "haarlem": "Hlm",
+  "amersfoort centraal": "Amf",
+  "amersfoort schothorst": "Amfs",
+  "amersfoort vathorst": "Avat",
+  "deventer": "Dv",
+  "enschede": "Es",
+  "hengelo": "Hgl",
+  "apeldoorn": "Apd",
+  "hilversum": "Hvs",
+  "zwolle": "Zl",
+  "groningen": "Gn",
+  "leeuwarden": "Lw",
+  "lelystad centrum": "Lls",
+  "almere centrum": "Alm",
+  "schiphol airport": "Shl",
+  "utrecht centraal": "Ut",
+  "den haag centraal": "Gvc",
+  "rotterdam centraal": "Rtd",
+  "eindhoven centraal": "Ehv",
+  "zandvoort aan zee": "Zvt",
+};
+
+function abbreviateStation(name) {
+  if (!name) return name;
+  return STATION_CODES[name.toLowerCase()] || name;
+}
+
 function describeDeparture(dep) {
   const planned = new Date(dep.plannedDateTime);
   const actual = dep.actualDateTime ? new Date(dep.actualDateTime) : null;
@@ -197,13 +233,16 @@ function describeDeparture(dep) {
   const cancelled = dep.cancelled || false;
   const track = dep.actualTrack || dep.plannedTrack || "";
 
+  // Display form leads with the time and uses the short station code for the
+  // destination: "18:03 IC Dv", "17:50 +2 ICD Amfs", "18:03 ✕ IC Dv".
+  const dest = `${category} ${abbreviateStation(direction)}`;
   let message;
   if (cancelled) {
-    message = `${category} ${direction} rijdt niet`;
+    message = `${plannedTime} ✕ ${dest}`;
   } else if (delayMinutes >= 1) {
-    message = `${category} ${direction} rijdt plus ${delayMinutes}`;
+    message = `${plannedTime} +${delayMinutes} ${dest}`;
   } else {
-    message = `${category} ${direction} rijdt om ${plannedTime}`;
+    message = `${plannedTime} ${dest}`;
   }
 
   return {
@@ -217,11 +256,11 @@ function describeDeparture(dep) {
   };
 }
 
-// Compact form for a single departure, e.g. "12:31 plus 3", "12:40" or "12:31 niet".
+// Compact form for a single departure, e.g. "12:31 +3", "12:40" or "12:31 ✕".
 function abbreviateDeparture(dep) {
   const { planned_time, delay_minutes, cancelled } = describeDeparture(dep);
-  if (cancelled) return `${planned_time} niet`;
-  if (delay_minutes >= 1) return `${planned_time} plus ${delay_minutes}`;
+  if (cancelled) return `${planned_time} ✕`;
+  if (delay_minutes >= 1) return `${planned_time} +${delay_minutes}`;
   return planned_time;
 }
 
@@ -233,44 +272,73 @@ function viaMatches(dep, viaFilter) {
   );
 }
 
-// Haarlem: next N departures whose destination is Amsterdam, in compact form.
-function haarlemToAmsterdam(departures, count = 3) {
-  const trains = departures
+// Haarlem: next N departures whose destination is Amsterdam.
+function selectHaarlem(departures, count = 3) {
+  return departures
     .filter((d) => d.product?.type !== "BUS")
     .filter((d) => (d.direction || "").toLowerCase().includes("amsterdam"))
-    .slice(0, count)
-    .map(abbreviateDeparture);
-
-  return `Haarlem: ${trains.length ? trains.join(", ") : "geen treinen"}`;
+    .slice(0, count);
 }
 
-// Next N intercity departures travelling via a given station, in the same
-// "IC <direction> rijdt om <time>" form used elsewhere.
-function intercityVia(departures, via, label, count = 2) {
+// Next N intercity departures travelling via a given station.
+function selectIntercityVia(departures, via, count = 2) {
   const viaFilter = via.toLowerCase();
-  const trains = departures
+  return departures
     .filter((d) => d.product?.type !== "BUS")
     .filter((d) => !isSprinter(d.product?.shortCategoryName))
     .filter((d) => viaMatches(d, viaFilter))
-    .slice(0, count)
-    .map((d) => describeDeparture(d).message);
+    .slice(0, count);
+}
 
-  return `${label}: ${trains.length ? trains.join("; ") : `geen IC via ${via}`}`;
+// Haarlem line, compact ("Haarlem: 17:47, 17:54, 18:00").
+function haarlemToAmsterdam(departures, count = 3) {
+  const trains = selectHaarlem(departures, count).map(abbreviateDeparture);
+  return `Haarlem: ${trains.length ? trains.join(", ") : "geen treinen"}`;
+}
+
+// Intercity line in full message form ("Centraal: 18:03 IC Dv, 18:20 +2 IC Es").
+function intercityVia(departures, via, label, count = 2) {
+  const trains = selectIntercityVia(departures, via, count).map(
+    (d) => describeDeparture(d).message
+  );
+  return `${label}: ${trains.length ? trains.join(", ") : `geen IC via ${via}`}`;
+}
+
+// Worst-case status across the displayed departures, shown as a headline so the
+// overall situation is graspable at a glance. A cancellation counts as the most
+// severe. Thresholds: on time -> green, 1-4 min -> yellow, >=5 min (or any
+// cancellation) -> red.
+function statusHeadline(deps) {
+  let worst = 0;
+  let cancelled = false;
+  for (const d of deps) {
+    const info = describeDeparture(d);
+    if (info.cancelled) cancelled = true;
+    else worst = Math.max(worst, info.delay_minutes);
+  }
+  if (cancelled || worst >= 5) return "🔴 Grote vertraging";
+  if (worst >= 1) return "🟡 Kleine vertraging";
+  return "🟢 Op tijd";
 }
 
 // After 13:00: combined return-trip overview for Haarlem, Amsterdam Centraal
 // and Amsterdam Zuid. Pure builder so it can be unit-tested.
 function buildReturnMessage(haarlem, asd, asdz) {
-  // Display-only: the route field is matched on "Amersfoort C.", but the
-  // visible text shortens "Amersfoort" (e.g. in directions) to "Amf".
-  const abbr = (s) => s.replace(/Amersfoort/g, "Amf");
+  // The headline reflects only the departures actually shown, so reuse the same
+  // selection the lines below use.
+  const headline = statusHeadline([
+    ...selectHaarlem(haarlem),
+    ...selectIntercityVia(asd, "Amersfoort C."),
+    ...selectIntercityVia(asdz, "Amersfoort C."),
+  ]);
 
   const haarlemMsg = haarlemToAmsterdam(haarlem);
-  const centraalMsg = abbr(intercityVia(asd, "Amersfoort C.", "Centraal"));
-  const zuidMsg = abbr(intercityVia(asdz, "Amersfoort C.", "Zuid"));
+  const centraalMsg = intercityVia(asd, "Amersfoort C.", "Centraal");
+  const zuidMsg = intercityVia(asdz, "Amersfoort C.", "Zuid");
 
   return {
-    message: [haarlemMsg, centraalMsg, zuidMsg].join("\n"),
+    message: [headline, haarlemMsg, centraalMsg, zuidMsg].join("\n"),
+    headline,
     sections: { haarlem: haarlemMsg, centraal: centraalMsg, zuid: zuidMsg },
   };
 }
@@ -331,7 +399,7 @@ app.get("/api/first-intercity", async (req, res) => {
 
     const message = withTestStatus(
       secondTrain
-        ? `${firstTrain.message}; ${secondTrain.message}`
+        ? `${firstTrain.message}, ${secondTrain.message}`
         : firstTrain.message
     );
 
@@ -371,8 +439,10 @@ module.exports = {
   amsterdamHour,
   isReturnTripTime,
   abbreviateDeparture,
+  abbreviateStation,
   haarlemToAmsterdam,
   intercityVia,
+  statusHeadline,
   buildReturnMessage,
   describeDeparture,
   shortenCategory,
