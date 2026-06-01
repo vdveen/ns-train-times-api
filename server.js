@@ -12,6 +12,43 @@ const DESTINATION_FILTER = process.env.DESTINATION_FILTER
 
 const NS_API_BASE = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2";
 
+// The return trip kicks in from 13:00 Amsterdam time onwards.
+const RETURN_TRIP_HOUR = 13;
+
+function amsterdamHour(now = new Date()) {
+  const dutch = now.toLocaleTimeString("en-GB", {
+    timeZone: "Europe/Amsterdam",
+    hour12: false,
+  });
+  return parseInt(dutch.split(":")[0], 10) % 24;
+}
+
+function isReturnTripTime(now = new Date()) {
+  return amsterdamHour(now) >= RETURN_TRIP_HOUR;
+}
+
+async function fetchDepartures(station) {
+  const url = `${NS_API_BASE}/departures?station=${encodeURIComponent(station)}&maxJourneys=40`;
+
+  const response = await fetch(url, {
+    headers: {
+      "Cache-Control": "no-cache",
+      "Ocp-Apim-Subscription-Key": NS_API_KEY,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    const err = new Error(`NS API request failed (${response.status})`);
+    err.status = response.status;
+    err.detail = text;
+    throw err;
+  }
+
+  const data = await response.json();
+  return data.payload?.departures || [];
+}
+
 app.get("/", (req, res) => {
   res.json({
     service: "NS Train Times for TRMNL",
@@ -151,6 +188,70 @@ function describeDeparture(dep) {
   };
 }
 
+// Compact form for a single departure, e.g. "12:31 plus 3", "12:40" or "12:31 niet".
+function abbreviateDeparture(dep) {
+  const { planned_time, delay_minutes, cancelled } = describeDeparture(dep);
+  if (cancelled) return `${planned_time} niet`;
+  if (delay_minutes >= 1) return `${planned_time} plus ${delay_minutes}`;
+  return planned_time;
+}
+
+function viaIncludes(dep, viaFilter) {
+  return (dep.routeStations || []).some(
+    (rs) => (rs.mediumName || "").toLowerCase().includes(viaFilter)
+  );
+}
+
+// Haarlem: next N departures whose destination is Amsterdam, in compact form.
+function haarlemToAmsterdam(departures, count = 3) {
+  const trains = departures
+    .filter((d) => d.product?.type !== "BUS")
+    .filter((d) => (d.direction || "").toLowerCase().includes("amsterdam"))
+    .slice(0, count)
+    .map(abbreviateDeparture);
+
+  return `Haarlem: ${trains.length ? trains.join(", ") : "geen treinen"}`;
+}
+
+// Next N intercity departures travelling via a given station, in the same
+// "IC <direction> rijdt om <time>" form used elsewhere.
+function intercityVia(departures, via, label, count = 2) {
+  const viaFilter = via.toLowerCase();
+  const trains = departures
+    .filter((d) => d.product?.type !== "BUS")
+    .filter((d) => !isSprinter(d.product?.shortCategoryName))
+    .filter((d) => viaIncludes(d, viaFilter))
+    .slice(0, count)
+    .map((d) => describeDeparture(d).message);
+
+  return `${label}: ${trains.length ? trains.join("; ") : `geen IC via ${via}`}`;
+}
+
+// After 13:00: combined return-trip overview for Haarlem, Amsterdam Centraal
+// and Amsterdam Zuid, fetched in parallel.
+async function handleReturnTrip(res) {
+  const [haarlem, asd, asdz] = await Promise.all([
+    fetchDepartures("HLM"),
+    fetchDepartures("ASD"),
+    fetchDepartures("ASDZ"),
+  ]);
+
+  const haarlemMsg = haarlemToAmsterdam(haarlem);
+  const asdMsg = intercityVia(asd, "Amersfoort", "Amsterdam C");
+  const asdzMsg = intercityVia(asdz, "Amersfoort", "Amsterdam Zuid");
+
+  res.json({
+    mode: "return",
+    message: [haarlemMsg, asdMsg, asdzMsg].join("\n"),
+    sections: {
+      haarlem: haarlemMsg,
+      amsterdam_centraal: asdMsg,
+      amsterdam_zuid: asdzMsg,
+    },
+    updated_at: new Date().toISOString(),
+  });
+}
+
 app.get("/api/first-intercity", async (req, res) => {
   const station = (req.query.station || STATION).toUpperCase();
   const via = req.query.via ?? "Hilversum";
@@ -161,26 +262,12 @@ app.get("/api/first-intercity", async (req, res) => {
   }
 
   try {
-    const url = `${NS_API_BASE}/departures?station=${encodeURIComponent(station)}&maxJourneys=40`;
-
-    const response = await fetch(url, {
-      headers: {
-        "Cache-Control": "no-cache",
-        "Ocp-Apim-Subscription-Key": NS_API_KEY,
-      },
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      return res.status(response.status).json({
-        error: "NS API request failed",
-        status: response.status,
-        detail: text,
-      });
+    // From 13:00 Amsterdam time, switch to the combined return-trip overview.
+    if (isReturnTripTime()) {
+      return await handleReturnTrip(res);
     }
 
-    const data = await response.json();
-    let departures = data.payload?.departures || [];
+    let departures = await fetchDepartures(station);
 
     departures = departures.filter((d) => d.product?.type !== "BUS");
     departures = departures.filter((d) => !isSprinter(d.product?.shortCategoryName));
@@ -224,10 +311,29 @@ app.get("/api/first-intercity", async (req, res) => {
       via,
     });
   } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json({
+        error: "NS API request failed",
+        status: err.status,
+        detail: err.detail,
+      });
+    }
     res.status(500).json({ error: "Failed to fetch first intercity", detail: err.message });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Train times API running on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Train times API running on port ${PORT}`);
+  });
+}
+
+module.exports = {
+  amsterdamHour,
+  isReturnTripTime,
+  abbreviateDeparture,
+  haarlemToAmsterdam,
+  intercityVia,
+  describeDeparture,
+  shortenCategory,
+};
