@@ -7,6 +7,7 @@ const {
   abbreviateDeparture,
   haarlemToAmsterdam,
   intercityVia,
+  buildReturnMessage,
   withTestStatus,
   state,
 } = require("../server");
@@ -168,6 +169,39 @@ test("Intercity via: nothing found", () => {
   assert.equal(
     intercityVia([], "Amersfoort C.", "Amsterdam C"),
     "Amsterdam C: geen IC via Amersfoort C."
+  );
+});
+
+test("buildReturnMessage: short labels and Amersfoort -> Amf", () => {
+  const haarlem = [
+    dep({ planned: "2026-06-01T17:17:00+02:00", direction: "Amsterdam Centraal" }),
+    dep({ planned: "2026-06-01T17:25:00+02:00", direction: "Amsterdam Centraal" }),
+  ];
+  const asd = [
+    dep({
+      planned: "2026-06-01T17:31:00+02:00",
+      direction: "Deventer",
+      via: ["Hilversum", "Amersfoort C."],
+    }),
+  ];
+  const asdz = [
+    dep({
+      planned: "2026-06-01T17:16:00+02:00",
+      direction: "Amersfoort Schothorst",
+      category: "Intercity direct",
+      via: ["Amsterdam Centraal", "Amersfoort C."],
+    }),
+  ];
+
+  const { message, sections } = buildReturnMessage(haarlem, asd, asdz);
+
+  assert.equal(sections.haarlem, "Haarlem: 17:17, 17:25");
+  assert.equal(sections.centraal, "Centraal: IC Deventer rijdt om 17:31");
+  // Direction "Amersfoort Schothorst" is shortened to "Amf Schothorst".
+  assert.equal(sections.zuid, "Zuid: ICD Amf Schothorst rijdt om 17:16");
+  assert.equal(
+    message,
+    "Haarlem: 17:17, 17:25\nCentraal: IC Deventer rijdt om 17:31\nZuid: ICD Amf Schothorst rijdt om 17:16"
   );
 });
 

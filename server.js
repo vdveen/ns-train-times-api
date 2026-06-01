@@ -259,7 +259,22 @@ function intercityVia(departures, via, label, count = 2) {
 }
 
 // After 13:00: combined return-trip overview for Haarlem, Amsterdam Centraal
-// and Amsterdam Zuid, fetched in parallel.
+// and Amsterdam Zuid. Pure builder so it can be unit-tested.
+function buildReturnMessage(haarlem, asd, asdz) {
+  // Display-only: the route field is matched on "Amersfoort C.", but the
+  // visible text shortens "Amersfoort" (e.g. in directions) to "Amf".
+  const abbr = (s) => s.replace(/Amersfoort/g, "Amf");
+
+  const haarlemMsg = haarlemToAmsterdam(haarlem);
+  const centraalMsg = abbr(intercityVia(asd, "Amersfoort C.", "Centraal"));
+  const zuidMsg = abbr(intercityVia(asdz, "Amersfoort C.", "Zuid"));
+
+  return {
+    message: [haarlemMsg, centraalMsg, zuidMsg].join("\n"),
+    sections: { haarlem: haarlemMsg, centraal: centraalMsg, zuid: zuidMsg },
+  };
+}
+
 async function handleReturnTrip(res) {
   const [haarlem, asd, asdz] = await Promise.all([
     fetchDepartures("HLM"),
@@ -267,19 +282,12 @@ async function handleReturnTrip(res) {
     fetchDepartures("ASDZ"),
   ]);
 
-  const haarlemMsg = haarlemToAmsterdam(haarlem);
-  // The NS route field abbreviates the name to "Amersfoort C.".
-  const asdMsg = intercityVia(asd, "Amersfoort C.", "Amsterdam C");
-  const asdzMsg = intercityVia(asdz, "Amersfoort C.", "Amsterdam Zuid");
+  const { message, sections } = buildReturnMessage(haarlem, asd, asdz);
 
   res.json({
     mode: "return",
-    message: withTestStatus([haarlemMsg, asdMsg, asdzMsg].join("\n")),
-    sections: {
-      haarlem: haarlemMsg,
-      amsterdam_centraal: asdMsg,
-      amsterdam_zuid: asdzMsg,
-    },
+    message: withTestStatus(message),
+    sections,
     updated_at: new Date().toISOString(),
   });
 }
@@ -365,6 +373,7 @@ module.exports = {
   abbreviateDeparture,
   haarlemToAmsterdam,
   intercityVia,
+  buildReturnMessage,
   describeDeparture,
   shortenCategory,
   withTestStatus,
