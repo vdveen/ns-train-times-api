@@ -397,11 +397,14 @@ app.get("/api/first-intercity", async (req, res) => {
     const second = departures[1];
     const secondTrain = second ? describeDeparture(second) : null;
 
-    const message = withTestStatus(
-      secondTrain
-        ? `${firstTrain.message}, ${secondTrain.message}`
-        : firstTrain.message
-    );
+    // Same colour-dotted headline as the return overview, so the morning
+    // glance also leads with the overall delay status.
+    const shown = second ? [first, second] : [first];
+    const headline = statusHeadline(shown);
+    const lines = secondTrain
+      ? `${firstTrain.message}, ${secondTrain.message}`
+      : firstTrain.message;
+    const message = withTestStatus(`${headline}\n${lines}`);
 
     res.json({
       category: firstTrain.category,
@@ -410,6 +413,7 @@ app.get("/api/first-intercity", async (req, res) => {
       delay_minutes: firstTrain.delay_minutes,
       cancelled: firstTrain.cancelled,
       track: firstTrain.track,
+      headline,
       message,
       next_train: secondTrain,
       updated_at: new Date().toISOString(),
