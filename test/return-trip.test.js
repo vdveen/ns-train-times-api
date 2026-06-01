@@ -7,6 +7,8 @@ const {
   abbreviateDeparture,
   haarlemToAmsterdam,
   intercityVia,
+  withTestStatus,
+  state,
 } = require("../server");
 
 // Build a fake NS departure. Times use an explicit +02:00 (CEST) offset so the
@@ -123,7 +125,7 @@ test("Amsterdam Centraal: next 2 IC via Amersfoort, full message form", () => {
   ];
 
   assert.equal(
-    intercityVia(departures, "Amersfoort", "Amsterdam C"),
+    intercityVia(departures, "Amersfoort Centraal", "Amsterdam C"),
     "Amsterdam C: IC Enschede rijdt om 14:32; IC Deventer rijdt plus 5"
   );
 });
@@ -143,14 +145,44 @@ test("Amsterdam Zuid: next 2 IC via Amersfoort", () => {
   ];
 
   assert.equal(
-    intercityVia(departures, "Amersfoort", "Amsterdam Zuid"),
+    intercityVia(departures, "Amersfoort Centraal", "Amsterdam Zuid"),
     "Amsterdam Zuid: IC Enschede rijdt om 14:30; IC Deventer rijdt om 14:50"
+  );
+});
+
+test("Intercity via matches the route field exactly, not the destination", () => {
+  // Destination is Amersfoort but it does NOT travel via Amersfoort Centraal as
+  // a route stop -> must not match (we filter on the via field, not direction).
+  const goesToButNotVia = dep({
+    planned: "2026-06-01T14:30:00+02:00",
+    direction: "Amersfoort Centraal",
+    via: ["Hilversum"],
+  });
+  assert.equal(
+    intercityVia([goesToButNotVia], "Amersfoort Centraal", "Amsterdam C"),
+    "Amsterdam C: geen IC via Amersfoort Centraal"
   );
 });
 
 test("Intercity via: nothing found", () => {
   assert.equal(
-    intercityVia([], "Amersfoort", "Amsterdam C"),
-    "Amsterdam C: geen IC via Amersfoort"
+    intercityVia([], "Amersfoort Centraal", "Amsterdam C"),
+    "Amsterdam C: geen IC via Amersfoort Centraal"
   );
+});
+
+test("withTestStatus appends a note only when tests fail", () => {
+  const original = state.testFailures;
+  try {
+    state.testFailures = 0;
+    assert.equal(withTestStatus("Haarlem: 12:40"), "Haarlem: 12:40");
+
+    state.testFailures = 3;
+    assert.equal(withTestStatus("Haarlem: 12:40"), "Haarlem: 12:40\n3 tests failed");
+
+    state.testFailures = 1;
+    assert.equal(withTestStatus("Haarlem: 12:40"), "Haarlem: 12:40\n1 test failed");
+  } finally {
+    state.testFailures = original;
+  }
 });

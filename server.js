@@ -1,4 +1,5 @@
 const express = require("express");
+const { spawn } = require("node:child_process");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -47,6 +48,34 @@ async function fetchDepartures(station) {
 
   const data = await response.json();
   return data.payload?.departures || [];
+}
+
+// Result of the most recent unit-test run, surfaced in the output message so a
+// broken deploy is visible on the display.
+const state = { testFailures: 0 };
+
+function withTestStatus(message) {
+  const n = state.testFailures;
+  if (n <= 0) return message;
+  return `${message}\n${n} test${n === 1 ? "" : "s"} failed`;
+}
+
+// Run the test suite in a child process and remember how many tests failed.
+function runTests() {
+  const child = spawn(process.execPath, ["--test"], { cwd: __dirname });
+  let output = "";
+  child.stdout.on("data", (d) => (output += d));
+  child.stderr.on("data", (d) => (output += d));
+  child.on("close", () => {
+    const match = output.match(/^# fail (\d+)/m);
+    state.testFailures = match ? parseInt(match[1], 10) : 0;
+    if (state.testFailures > 0) {
+      console.warn(`${state.testFailures} unit test(s) failed`);
+    }
+  });
+  child.on("error", (err) => {
+    console.warn("Could not run unit tests:", err.message);
+  });
 }
 
 app.get("/", (req, res) => {
@@ -196,9 +225,11 @@ function abbreviateDeparture(dep) {
   return planned_time;
 }
 
-function viaIncludes(dep, viaFilter) {
+// Does this departure travel via the given station? Matches on the route
+// ("via") stations by exact name, the same way the morning Hilversum filter does.
+function viaMatches(dep, viaFilter) {
   return (dep.routeStations || []).some(
-    (rs) => (rs.mediumName || "").toLowerCase().includes(viaFilter)
+    (rs) => (rs.mediumName || "").toLowerCase() === viaFilter
   );
 }
 
@@ -220,7 +251,7 @@ function intercityVia(departures, via, label, count = 2) {
   const trains = departures
     .filter((d) => d.product?.type !== "BUS")
     .filter((d) => !isSprinter(d.product?.shortCategoryName))
-    .filter((d) => viaIncludes(d, viaFilter))
+    .filter((d) => viaMatches(d, viaFilter))
     .slice(0, count)
     .map((d) => describeDeparture(d).message);
 
@@ -237,12 +268,12 @@ async function handleReturnTrip(res) {
   ]);
 
   const haarlemMsg = haarlemToAmsterdam(haarlem);
-  const asdMsg = intercityVia(asd, "Amersfoort", "Amsterdam C");
-  const asdzMsg = intercityVia(asdz, "Amersfoort", "Amsterdam Zuid");
+  const asdMsg = intercityVia(asd, "Amersfoort Centraal", "Amsterdam C");
+  const asdzMsg = intercityVia(asdz, "Amersfoort Centraal", "Amsterdam Zuid");
 
   res.json({
     mode: "return",
-    message: [haarlemMsg, asdMsg, asdzMsg].join("\n"),
+    message: withTestStatus([haarlemMsg, asdMsg, asdzMsg].join("\n")),
     sections: {
       haarlem: haarlemMsg,
       amsterdam_centraal: asdMsg,
@@ -272,17 +303,13 @@ app.get("/api/first-intercity", async (req, res) => {
     departures = departures.filter((d) => d.product?.type !== "BUS");
     departures = departures.filter((d) => !isSprinter(d.product?.shortCategoryName));
     if (viaFilter) {
-      departures = departures.filter((d) =>
-        (d.routeStations || []).some(
-          (rs) => (rs.mediumName || "").toLowerCase() === viaFilter
-        )
-      );
+      departures = departures.filter((d) => viaMatches(d, viaFilter));
     }
 
     const first = departures[0];
     if (!first) {
       return res.json({
-        message: `Geen intercity via ${via || "..."} gevonden`,
+        message: withTestStatus(`Geen intercity via ${via || "..."} gevonden`),
         station,
         via,
         updated_at: new Date().toISOString(),
@@ -293,9 +320,11 @@ app.get("/api/first-intercity", async (req, res) => {
     const second = departures[1];
     const secondTrain = second ? describeDeparture(second) : null;
 
-    const message = secondTrain
-      ? `${firstTrain.message}; ${secondTrain.message}`
-      : firstTrain.message;
+    const message = withTestStatus(
+      secondTrain
+        ? `${firstTrain.message}; ${secondTrain.message}`
+        : firstTrain.message
+    );
 
     res.json({
       category: firstTrain.category,
@@ -323,6 +352,7 @@ app.get("/api/first-intercity", async (req, res) => {
 });
 
 if (require.main === module) {
+  runTests();
   app.listen(PORT, () => {
     console.log(`Train times API running on port ${PORT}`);
   });
@@ -336,4 +366,6 @@ module.exports = {
   intercityVia,
   describeDeparture,
   shortenCategory,
+  withTestStatus,
+  state,
 };
