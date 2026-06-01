@@ -101,14 +101,14 @@ test("Amsterdam Centraal: next 2 IC via Amersfoort, full message form", () => {
     dep({
       planned: "2026-06-01T14:32:00+02:00",
       direction: "Enschede",
-      via: ["Hilversum", "Amersfoort Centraal", "Deventer"],
+      via: ["Hilversum", "Amersfoort C.", "Deventer"],
     }),
     // Sprinter — skipped even though it goes via Amersfoort.
     dep({
       planned: "2026-06-01T14:38:00+02:00",
       direction: "Amersfoort Schothorst",
       category: "Sprinter",
-      via: ["Hilversum", "Amersfoort Centraal"],
+      via: ["Hilversum", "Amersfoort C."],
     }),
     // IC not via Amersfoort — skipped.
     dep({
@@ -120,12 +120,12 @@ test("Amsterdam Centraal: next 2 IC via Amersfoort, full message form", () => {
       planned: "2026-06-01T14:45:00+02:00",
       actual: "2026-06-01T14:50:00+02:00",
       direction: "Deventer",
-      via: ["Hilversum", "Amersfoort Centraal"],
+      via: ["Hilversum", "Amersfoort C."],
     }),
   ];
 
   assert.equal(
-    intercityVia(departures, "Amersfoort Centraal", "Amsterdam C"),
+    intercityVia(departures, "Amersfoort C.", "Amsterdam C"),
     "Amsterdam C: IC Enschede rijdt om 14:32; IC Deventer rijdt plus 5"
   );
 });
@@ -135,39 +135,39 @@ test("Amsterdam Zuid: next 2 IC via Amersfoort", () => {
     dep({
       planned: "2026-06-01T14:30:00+02:00",
       direction: "Enschede",
-      via: ["Amsterdam Centraal", "Amersfoort Centraal"],
+      via: ["Amsterdam Centraal", "Amersfoort C."],
     }),
     dep({
       planned: "2026-06-01T14:50:00+02:00",
       direction: "Deventer",
-      via: ["Amsterdam Centraal", "Amersfoort Centraal"],
+      via: ["Amsterdam Centraal", "Amersfoort C."],
     }),
   ];
 
   assert.equal(
-    intercityVia(departures, "Amersfoort Centraal", "Amsterdam Zuid"),
+    intercityVia(departures, "Amersfoort C.", "Amsterdam Zuid"),
     "Amsterdam Zuid: IC Enschede rijdt om 14:30; IC Deventer rijdt om 14:50"
   );
 });
 
 test("Intercity via matches the route field exactly, not the destination", () => {
-  // Destination is Amersfoort but it does NOT travel via Amersfoort Centraal as
-  // a route stop -> must not match (we filter on the via field, not direction).
+  // Destination is Amersfoort but it does NOT travel via Amersfoort C. as a
+  // route stop -> must not match (we filter on the via field, not direction).
   const goesToButNotVia = dep({
     planned: "2026-06-01T14:30:00+02:00",
     direction: "Amersfoort Centraal",
     via: ["Hilversum"],
   });
   assert.equal(
-    intercityVia([goesToButNotVia], "Amersfoort Centraal", "Amsterdam C"),
-    "Amsterdam C: geen IC via Amersfoort Centraal"
+    intercityVia([goesToButNotVia], "Amersfoort C.", "Amsterdam C"),
+    "Amsterdam C: geen IC via Amersfoort C."
   );
 });
 
 test("Intercity via: nothing found", () => {
   assert.equal(
-    intercityVia([], "Amersfoort Centraal", "Amsterdam C"),
-    "Amsterdam C: geen IC via Amersfoort Centraal"
+    intercityVia([], "Amersfoort C.", "Amsterdam C"),
+    "Amsterdam C: geen IC via Amersfoort C."
   );
 });
 

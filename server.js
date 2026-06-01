@@ -268,8 +268,9 @@ async function handleReturnTrip(res) {
   ]);
 
   const haarlemMsg = haarlemToAmsterdam(haarlem);
-  const asdMsg = intercityVia(asd, "Amersfoort Centraal", "Amsterdam C");
-  const asdzMsg = intercityVia(asdz, "Amersfoort Centraal", "Amsterdam Zuid");
+  // The NS route field abbreviates the name to "Amersfoort C.".
+  const asdMsg = intercityVia(asd, "Amersfoort C.", "Amsterdam C");
+  const asdzMsg = intercityVia(asdz, "Amersfoort C.", "Amsterdam Zuid");
 
   res.json({
     mode: "return",
