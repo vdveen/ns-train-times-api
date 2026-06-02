@@ -5,8 +5,10 @@ const {
   amsterdamHour,
   isReturnTripTime,
   abbreviateDeparture,
+  abbreviateStation,
   haarlemToAmsterdam,
   intercityVia,
+  statusHeadline,
   buildReturnMessage,
   withTestStatus,
   state,
@@ -53,14 +55,20 @@ test("abbreviateDeparture: on time, delayed and cancelled", () => {
         actual: "2026-06-01T12:34:00+02:00",
       })
     ),
-    "12:31 plus 3"
+    "12:31 +3"
   );
   assert.equal(
     abbreviateDeparture(
       dep({ planned: "2026-06-01T12:31:00+02:00", cancelled: true })
     ),
-    "12:31 niet"
+    "12:31 ✕"
   );
+});
+
+test("abbreviateStation: known codes, unknown left untouched", () => {
+  assert.equal(abbreviateStation("Amersfoort Schothorst"), "Amfs");
+  assert.equal(abbreviateStation("deventer"), "Dv");
+  assert.equal(abbreviateStation("Hannover Hbf"), "Hannover Hbf");
 });
 
 test("Haarlem: next 3 trains to Amsterdam, abbreviated and filtered", () => {
@@ -86,7 +94,7 @@ test("Haarlem: next 3 trains to Amsterdam, abbreviated and filtered", () => {
 
   assert.equal(
     haarlemToAmsterdam(departures),
-    "Haarlem: 12:31 plus 3, 12:40, 12:51"
+    "Haarlem: 12:31 +3, 12:40, 12:51"
   );
 });
 
@@ -127,7 +135,7 @@ test("Amsterdam Centraal: next 2 IC via Amersfoort, full message form", () => {
 
   assert.equal(
     intercityVia(departures, "Amersfoort C.", "Amsterdam C"),
-    "Amsterdam C: IC Enschede rijdt om 14:32; IC Deventer rijdt plus 5"
+    "Amsterdam C: 14:32 IC Es, 14:45 +5 IC Dv"
   );
 });
 
@@ -147,7 +155,7 @@ test("Amsterdam Zuid: next 2 IC via Amersfoort", () => {
 
   assert.equal(
     intercityVia(departures, "Amersfoort C.", "Amsterdam Zuid"),
-    "Amsterdam Zuid: IC Enschede rijdt om 14:30; IC Deventer rijdt om 14:50"
+    "Amsterdam Zuid: 14:30 IC Es, 14:50 IC Dv"
   );
 });
 
@@ -172,7 +180,7 @@ test("Intercity via: nothing found", () => {
   );
 });
 
-test("buildReturnMessage: short labels and Amersfoort -> Amf", () => {
+test("buildReturnMessage: headline, station codes and time-first lines", () => {
   const haarlem = [
     dep({ planned: "2026-06-01T17:17:00+02:00", direction: "Amsterdam Centraal" }),
     dep({ planned: "2026-06-01T17:25:00+02:00", direction: "Amsterdam Centraal" }),
@@ -193,16 +201,36 @@ test("buildReturnMessage: short labels and Amersfoort -> Amf", () => {
     }),
   ];
 
-  const { message, sections } = buildReturnMessage(haarlem, asd, asdz);
+  const { message, sections, headline } = buildReturnMessage(haarlem, asd, asdz);
 
   assert.equal(sections.haarlem, "Haarlem: 17:17, 17:25");
-  assert.equal(sections.centraal, "Centraal: IC Deventer rijdt om 17:31");
-  // Direction "Amersfoort Schothorst" is shortened to "Amf Schothorst".
-  assert.equal(sections.zuid, "Zuid: ICD Amf Schothorst rijdt om 17:16");
+  assert.equal(sections.centraal, "Centraal: 17:31 IC Dv");
+  // Direction "Amersfoort Schothorst" is shortened to the station code "Amfs".
+  assert.equal(sections.zuid, "Zuid: 17:16 ICD Amfs");
+  assert.equal(headline, "🟢 Op tijd");
   assert.equal(
     message,
-    "Haarlem: 17:17, 17:25\nCentraal: IC Deventer rijdt om 17:31\nZuid: ICD Amf Schothorst rijdt om 17:16"
+    "🟢 Op tijd\nHaarlem: 17:17, 17:25\nCentraal: 17:31 IC Dv\nZuid: 17:16 ICD Amfs"
   );
+});
+
+test("statusHeadline: green / yellow / red by worst delay, red on cancel", () => {
+  const onTime = dep({ planned: "2026-06-01T17:00:00+02:00" });
+  const small = dep({
+    planned: "2026-06-01T17:00:00+02:00",
+    actual: "2026-06-01T17:03:00+02:00",
+  });
+  const big = dep({
+    planned: "2026-06-01T17:00:00+02:00",
+    actual: "2026-06-01T17:08:00+02:00",
+  });
+  const gone = dep({ planned: "2026-06-01T17:00:00+02:00", cancelled: true });
+
+  assert.equal(statusHeadline([onTime]), "🟢 Op tijd");
+  assert.equal(statusHeadline([onTime, small]), "🟡 Kleine vertraging");
+  assert.equal(statusHeadline([small, big]), "🔴 Grote vertraging");
+  // A cancellation is treated as the most severe, regardless of delays.
+  assert.equal(statusHeadline([onTime, gone]), "🔴 Grote vertraging");
 });
 
 test("withTestStatus appends a note only when tests fail", () => {
