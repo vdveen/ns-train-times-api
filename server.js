@@ -468,6 +468,13 @@ app.get("/api/first-intercity", async (req, res) => {
   }
 });
 
+// Anything that didn't match a route gets a JSON 404 rather than Express's
+// default HTML page, so clients that expect JSON (e.g. the iOS Shortcut) fail
+// with a parseable body instead of a confusing conversion error.
+app.use((req, res) => {
+  res.status(404).json({ error: "Not found", path: req.path });
+});
+
 if (require.main === module) {
   runTests();
   app.listen(PORT, () => {
