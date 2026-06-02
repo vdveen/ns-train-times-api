@@ -1,8 +1,14 @@
 const express = require("express");
+const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Shared secret that gates the /api routes. Set this in Railway's Variables to
+// keep random crawlers/bots off the endpoint. If unset, the API stays open so a
+// fresh deploy keeps working until the token is configured.
+const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 
 const NS_API_KEY = process.env.NS_API_KEY;
 const STATION = process.env.STATION || "AMF"; // Default: Amersfoort Centraal
@@ -78,6 +84,33 @@ function runTests() {
   });
 }
 
+// Constant-time string compare so the token check doesn't leak length/contents
+// via timing. Returns false on any mismatch, including differing lengths.
+function tokenMatches(provided, expected) {
+  if (!expected) return false;
+  const a = Buffer.from(String(provided ?? ""));
+  const b = Buffer.from(String(expected));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+// Pull the token from (in order) a Bearer Authorization header, an
+// X-Access-Token header, or a `token` query param. The query param keeps the
+// iOS Shortcut zero-config (just append ?token=...); the headers are tidier.
+function extractToken(req) {
+  const auth = req.get("authorization") || "";
+  if (auth.startsWith("Bearer ")) return auth.slice(7).trim();
+  return req.get("x-access-token") || req.query.token || "";
+}
+
+function requireToken(req, res, next) {
+  // Barrier disabled until a token is configured, so deploys don't break.
+  if (!ACCESS_TOKEN) return next();
+  if (tokenMatches(extractToken(req), ACCESS_TOKEN)) return next();
+  res.set("WWW-Authenticate", "Bearer");
+  return res.status(401).json({ error: "Unauthorized" });
+}
+
 app.get("/", (req, res) => {
   res.json({
     service: "NS Train Times for TRMNL",
@@ -85,6 +118,9 @@ app.get("/", (req, res) => {
     endpoint: "/api/train-times",
   });
 });
+
+// Everything under /api requires the shared secret (when one is configured).
+app.use("/api", requireToken);
 
 app.get("/api/train-times", async (req, res) => {
   const station = req.query.station || STATION;
@@ -451,5 +487,7 @@ module.exports = {
   describeDeparture,
   shortenCategory,
   withTestStatus,
+  tokenMatches,
+  extractToken,
   state,
 };
