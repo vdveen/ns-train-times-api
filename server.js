@@ -300,12 +300,33 @@ function abbreviateDeparture(dep) {
   return planned_time;
 }
 
+// Normalise a station name so the abbreviated route form ("Amersfoort C.") and
+// the full destination form ("Amersfoort Centraal") compare equal. Route stops
+// expose the short "C." form while a terminating train's `direction` spells out
+// "Centraal", so we fold one into the other before comparing.
+function normalizeStation(name) {
+  return (name || "")
+    .toLowerCase()
+    .replace(/\bcentraal\b/, "c.")
+    .trim();
+}
+
 // Does this departure travel via the given station? Matches on the route
-// ("via") stations by exact name, the same way the morning Hilversum filter does.
+// ("via") stations by name, the same way the morning Hilversum filter does.
 function viaMatches(dep, viaFilter) {
+  const target = normalizeStation(viaFilter);
   return (dep.routeStations || []).some(
-    (rs) => (rs.mediumName || "").toLowerCase() === viaFilter
+    (rs) => normalizeStation(rs.mediumName) === target
   );
+}
+
+// Does this departure terminate at the given station? On the return leg an
+// intercity may *end* at Amersfoort Centraal instead of calling at it en route
+// (see the 21:00 "Amersfoort Centraal" departure on the board). Such a train
+// lists Amersfoort as its destination ("direction") with no matching route
+// stop, so viaMatches alone would skip it.
+function terminatesAt(dep, station) {
+  return normalizeStation(dep.direction) === normalizeStation(station);
 }
 
 // Haarlem: next N departures whose destination is Amsterdam.
@@ -316,13 +337,14 @@ function selectHaarlem(departures, count = 3) {
     .slice(0, count);
 }
 
-// Next N intercity departures travelling via a given station.
+// Next N intercity departures that reach a given station, whether they call at
+// it en route (viaMatches) or terminate there (terminatesAt). The latter covers
+// return-trip trains that end at Amersfoort Centraal rather than passing through.
 function selectIntercityVia(departures, via, count = 2) {
-  const viaFilter = via.toLowerCase();
   return departures
     .filter((d) => d.product?.type !== "BUS")
     .filter((d) => !isSprinter(d.product?.shortCategoryName))
-    .filter((d) => viaMatches(d, viaFilter))
+    .filter((d) => viaMatches(d, via) || terminatesAt(d, via))
     .slice(0, count);
 }
 
