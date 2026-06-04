@@ -159,16 +159,30 @@ test("Amsterdam Zuid: next 2 IC via Amersfoort", () => {
   );
 });
 
-test("Intercity via matches the route field exactly, not the destination", () => {
-  // Destination is Amersfoort but it does NOT travel via Amersfoort C. as a
-  // route stop -> must not match (we filter on the via field, not direction).
-  const goesToButNotVia = dep({
+test("Intercity terminating at Amersfoort is included, even without a via stop", () => {
+  // Destination is Amersfoort Centraal but it does NOT list Amersfoort C. as a
+  // route stop because the train ends there -> must still match. The full
+  // "Centraal" destination and the abbreviated "C." filter are the same place.
+  const endsAtAmersfoort = dep({
     planned: "2026-06-01T14:30:00+02:00",
     direction: "Amersfoort Centraal",
     via: ["Hilversum"],
   });
   assert.equal(
-    intercityVia([goesToButNotVia], "Amersfoort C.", "Amsterdam C"),
+    intercityVia([endsAtAmersfoort], "Amersfoort C.", "Amsterdam C"),
+    "Amsterdam C: 14:30 IC Amf"
+  );
+});
+
+test("Intercity not reaching Amersfoort at all is still skipped", () => {
+  // Neither a route stop nor the destination is Amersfoort -> must not match.
+  const elsewhere = dep({
+    planned: "2026-06-01T14:30:00+02:00",
+    direction: "Den Haag Centraal",
+    via: ["Schiphol Airport", "Leiden Centraal"],
+  });
+  assert.equal(
+    intercityVia([elsewhere], "Amersfoort C.", "Amsterdam C"),
     "Amsterdam C: geen IC via Amersfoort C."
   );
 });
