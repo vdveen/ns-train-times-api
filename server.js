@@ -17,7 +17,12 @@ const DESTINATION_FILTER = process.env.DESTINATION_FILTER
   ? process.env.DESTINATION_FILTER.split(",").map((d) => d.trim().toLowerCase())
   : [];
 
-const NS_API_BASE = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2";
+const NS_API_BASE =
+  process.env.NS_API_BASE ||
+  "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2";
+const NS_DEPARTURES_URL =
+  process.env.NS_DEPARTURES_URL ||
+  `${NS_API_BASE.replace(/\/$/, "")}/departures`;
 
 // The return trip kicks in from 13:00 Amsterdam time onwards.
 const RETURN_TRIP_HOUR = 13;
@@ -34,15 +39,35 @@ function isReturnTripTime(now = new Date()) {
   return amsterdamHour(now) >= RETURN_TRIP_HOUR;
 }
 
-async function fetchDepartures(station) {
-  const url = `${NS_API_BASE}/departures?station=${encodeURIComponent(station)}&maxJourneys=40`;
+function buildDeparturesUrl(station, maxJourneys = 40) {
+  const url = new URL(NS_DEPARTURES_URL);
+  url.searchParams.set("station", station);
+  if (maxJourneys) {
+    url.searchParams.set("maxJourneys", String(maxJourneys));
+  }
+  return url;
+}
 
-  const response = await fetch(url, {
-    headers: {
-      "Cache-Control": "no-cache",
-      "Ocp-Apim-Subscription-Key": NS_API_KEY,
-    },
-  });
+function nsApiHeaders() {
+  const headers = { "Cache-Control": "no-cache" };
+  if (NS_API_KEY) {
+    headers["Ocp-Apim-Subscription-Key"] = NS_API_KEY;
+  }
+  return headers;
+}
+
+function extractDepartures(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.payload?.departures)) return data.payload.departures;
+  if (Array.isArray(data?.departures)) return data.departures;
+  if (Array.isArray(data?.payload)) return data.payload;
+  return [];
+}
+
+async function fetchDepartures(station, options = {}) {
+  const url = buildDeparturesUrl(station, options.maxJourneys ?? 40);
+
+  const response = await fetch(url, { headers: nsApiHeaders() });
 
   if (!response.ok) {
     const text = await response.text();
@@ -53,7 +78,7 @@ async function fetchDepartures(station) {
   }
 
   const data = await response.json();
-  return data.payload?.departures || [];
+  return extractDepartures(data);
 }
 
 // Result of the most recent unit-test run, surfaced in the output message so a
@@ -130,26 +155,7 @@ app.get("/api/train-times", async (req, res) => {
   }
 
   try {
-    const url = `${NS_API_BASE}/departures?station=${encodeURIComponent(station)}&maxJourneys=40`;
-
-    const response = await fetch(url, {
-      headers: {
-        "Cache-Control": "no-cache",
-        "Ocp-Apim-Subscription-Key": NS_API_KEY,
-      },
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      return res.status(response.status).json({
-        error: "NS API request failed",
-        status: response.status,
-        detail: text,
-      });
-    }
-
-    const data = await response.json();
-    let departures = data.payload?.departures || [];
+    let departures = await fetchDepartures(station, { maxJourneys: 40 });
 
     if (DELAY > 0) {
       const cutoff = new Date(Date.now() + DELAY * 60000);
@@ -195,6 +201,13 @@ app.get("/api/train-times", async (req, res) => {
       station,
     });
   } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json({
+        error: "NS API request failed",
+        status: err.status,
+        detail: err.detail,
+      });
+    }
     res.status(500).json({ error: "Failed to fetch train times", detail: err.message });
   }
 });
@@ -507,6 +520,9 @@ if (require.main === module) {
 module.exports = {
   amsterdamHour,
   isReturnTripTime,
+  buildDeparturesUrl,
+  extractDepartures,
+  fetchDepartures,
   abbreviateDeparture,
   abbreviateStation,
   haarlemToAmsterdam,
