@@ -416,8 +416,11 @@ function buildReturnMessage(haarlem, asd, asdz) {
 
 // Each intercity to Amsterdam Zuid first runs out to Amersfoort Schothorst and
 // turns there, so a delay on that feeder (usually the :20 and :50 departures)
-// lands on the Zuid train even while NS still reports it as on time. Only a
-// real delay is worth the extra ink, hence the 5-minute floor.
+// lands on the Zuid train even while NS still reports it as on time. The
+// turnaround has ~10 minutes of slack but turning the train also costs time, so
+// it does not always absorb the delay; a feeder running 5 or more minutes late
+// is also a sign it is stuck behind something on its way in. Hence the
+// 5-minute floor.
 const FEEDER_DIRECTION = "Amersfoort Schothorst";
 const FEEDER_MIN_DELAY = 5;
 // How long before the Zuid departure the feeder leaves: ~15-20 minutes in the
