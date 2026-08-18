@@ -397,7 +397,13 @@ test("feederNote: threshold, cancellation and the matching window", () => {
     feederNote(zuid, [feeder({ actual: "2026-06-01T07:25:00+02:00" })]),
     " (Amfs: +5)"
   );
-  assert.equal(feederNote(zuid, [feeder({ cancelled: true })]), " (Amfs: ✕)");
+  // A cancelled feeder leg means NS turned the train at Amersfoort Centraal to
+  // protect the Zuid departure, so it is not a warning.
+  assert.equal(feederNote(zuid, [feeder({ cancelled: true })]), "");
+  assert.equal(
+    feederNote(zuid, [feeder({ cancelled: true, actual: "2026-06-01T07:35:00+02:00" })]),
+    ""
+  );
 
   // Too far ahead of the Zuid train to be the one that turns into it.
   const early = dep({

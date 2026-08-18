@@ -444,14 +444,18 @@ function findFeeder(dep, feeders) {
   return best;
 }
 
-// Suffix for a Zuid departure whose feeder is in trouble: " (Amfs: +10)", or
-// " (Amfs: ✕)" when it is cancelled outright. Empty when all is well, so an
-// undelayed feeder stays invisible.
+// Suffix for a Zuid departure whose feeder runs late: " (Amfs: +10)". Empty
+// when all is well, so an undelayed feeder stays invisible.
+//
+// A cancelled feeder leg is deliberately silent: when the delay grows too big
+// NS turns the train at Amersfoort Centraal instead of running it out to
+// Schothorst, which protects the Zuid departure rather than threatening it.
+// Whatever delay is left then shows on the Zuid train itself.
 function feederNote(dep, feeders) {
   const feeder = findFeeder(dep, feeders);
   if (!feeder) return "";
   const { delay_minutes, cancelled } = describeDeparture(feeder);
-  if (cancelled) return " (Amfs: ✕)";
+  if (cancelled) return "";
   if (delay_minutes >= FEEDER_MIN_DELAY) return ` (Amfs: +${delay_minutes})`;
   return "";
 }
