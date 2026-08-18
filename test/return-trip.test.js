@@ -10,6 +10,7 @@ const {
   intercityVia,
   statusHeadline,
   buildReturnMessage,
+  buildMorningMessage,
   withTestStatus,
   state,
 } = require("../server");
@@ -261,4 +262,59 @@ test("withTestStatus appends a note only when tests fail", () => {
   } finally {
     state.testFailures = original;
   }
+});
+
+test("buildMorningMessage: two departures per direction, Centraal and Zuid", () => {
+  const departures = [
+    dep({
+      planned: "2026-06-01T07:33:00+02:00",
+      direction: "Amsterdam Centraal",
+      via: ["Hilversum", "Weesp", "Amsterdam C."],
+    }),
+    dep({
+      planned: "2026-06-01T07:41:00+02:00",
+      actual: "2026-06-01T07:43:00+02:00",
+      direction: "Schiphol Airport",
+      via: ["Hilversum", "Amsterdam Zuid"],
+    }),
+    dep({
+      planned: "2026-06-01T08:03:00+02:00",
+      direction: "Amsterdam Centraal",
+      via: ["Hilversum", "Weesp", "Amsterdam C."],
+    }),
+    dep({
+      planned: "2026-06-01T08:11:00+02:00",
+      direction: "Rotterdam Centraal",
+      via: ["Hilversum", "Amsterdam Zuid"],
+    }),
+    // Beyond the two per direction, so it must not show up.
+    dep({
+      planned: "2026-06-01T08:33:00+02:00",
+      direction: "Amsterdam Centraal",
+      via: ["Hilversum", "Weesp", "Amsterdam C."],
+    }),
+  ];
+
+  const { message, headline, sections } = buildMorningMessage(departures);
+
+  assert.equal(headline, "🟡 Kleine vertraging");
+  assert.equal(sections.centraal, "Centraal: 07:33 IC Asd, 08:03 IC Asd");
+  assert.equal(sections.zuid, "Zuid: 07:41 +2 IC Shl, 08:11 IC Rtd");
+  assert.equal(
+    message,
+    "🟡 Kleine vertraging\nCentraal: 07:33 IC Asd, 08:03 IC Asd\nZuid: 07:41 +2 IC Shl, 08:11 IC Rtd"
+  );
+});
+
+test("buildMorningMessage: falls back to a plain next-departures line", () => {
+  const departures = [
+    dep({ planned: "2026-06-01T07:33:00+02:00", direction: "Zwolle", via: ["Amersfoort Vathorst"] }),
+    dep({ planned: "2026-06-01T07:48:00+02:00", direction: "Groningen", via: ["Zwolle"] }),
+    dep({ planned: "2026-06-01T08:03:00+02:00", direction: "Zwolle", via: ["Amersfoort Vathorst"] }),
+  ];
+
+  const { message, sections } = buildMorningMessage(departures);
+
+  assert.equal(sections.next, "07:33 IC Zl, 07:48 IC Gn");
+  assert.equal(message, "🟢 Op tijd\n07:33 IC Zl, 07:48 IC Gn");
 });

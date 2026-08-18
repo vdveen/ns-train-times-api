@@ -414,6 +414,35 @@ function buildReturnMessage(haarlem, asd, asdz) {
   };
 }
 
+// Before 13:00: the outbound glance. The intercities via Hilversum split into
+// two directions — those calling at Amsterdam Centraal and those calling at
+// Amsterdam Zuid — so show the next `count` of each instead of just the next
+// train per direction, mirroring the return-trip overview. `departures` is
+// already filtered (no buses, no sprinters, via-station applied) by the caller.
+function buildMorningMessage(departures, count = 2) {
+  const centraal = selectIntercityVia(departures, "Amsterdam C.", count);
+  const zuid = selectIntercityVia(departures, "Amsterdam Zuid", count);
+
+  // A station/via combination that reaches neither (e.g. a custom ?station=)
+  // falls back to one plain line with the next departures, whatever they are.
+  if (!centraal.length && !zuid.length) {
+    const next = departures.slice(0, count);
+    const headline = statusHeadline(next);
+    const line = next.map((d) => describeDeparture(d).message).join(", ");
+    return { message: `${headline}\n${line}`, headline, sections: { next: line } };
+  }
+
+  const headline = statusHeadline([...centraal, ...zuid]);
+  const centraalMsg = intercityVia(departures, "Amsterdam C.", "Centraal", count);
+  const zuidMsg = intercityVia(departures, "Amsterdam Zuid", "Zuid", count);
+
+  return {
+    message: [headline, centraalMsg, zuidMsg].join("\n"),
+    headline,
+    sections: { centraal: centraalMsg, zuid: zuidMsg },
+  };
+}
+
 async function handleReturnTrip(res) {
   const [haarlem, asd, asdz] = await Promise.all([
     fetchDepartures("HLM"),
@@ -470,12 +499,8 @@ app.get("/api/first-intercity", async (req, res) => {
 
     // Same colour-dotted headline as the return overview, so the morning
     // glance also leads with the overall delay status.
-    const shown = second ? [first, second] : [first];
-    const headline = statusHeadline(shown);
-    const lines = secondTrain
-      ? `${firstTrain.message}, ${secondTrain.message}`
-      : firstTrain.message;
-    const message = withTestStatus(`${headline}\n${lines}`);
+    const { message: body, headline, sections } = buildMorningMessage(departures);
+    const message = withTestStatus(body);
 
     res.json({
       category: firstTrain.category,
@@ -486,6 +511,7 @@ app.get("/api/first-intercity", async (req, res) => {
       track: firstTrain.track,
       headline,
       message,
+      sections,
       next_train: secondTrain,
       updated_at: new Date().toISOString(),
       station,
@@ -529,6 +555,7 @@ module.exports = {
   intercityVia,
   statusHeadline,
   buildReturnMessage,
+  buildMorningMessage,
   describeDeparture,
   shortenCategory,
   withTestStatus,
