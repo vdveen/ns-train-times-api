@@ -10,6 +10,8 @@ const {
   intercityVia,
   statusHeadline,
   buildReturnMessage,
+  buildMorningMessage,
+  feederNote,
   withTestStatus,
   state,
 } = require("../server");
@@ -261,4 +263,162 @@ test("withTestStatus appends a note only when tests fail", () => {
   } finally {
     state.testFailures = original;
   }
+});
+
+test("buildMorningMessage: two departures per direction, Centraal and Zuid", () => {
+  const departures = [
+    dep({
+      planned: "2026-06-01T07:33:00+02:00",
+      direction: "Amsterdam Centraal",
+      via: ["Hilversum", "Weesp", "Amsterdam C."],
+    }),
+    dep({
+      planned: "2026-06-01T07:41:00+02:00",
+      actual: "2026-06-01T07:43:00+02:00",
+      direction: "Schiphol Airport",
+      via: ["Hilversum", "Amsterdam Zuid"],
+    }),
+    dep({
+      planned: "2026-06-01T08:03:00+02:00",
+      direction: "Amsterdam Centraal",
+      via: ["Hilversum", "Weesp", "Amsterdam C."],
+    }),
+    dep({
+      planned: "2026-06-01T08:11:00+02:00",
+      direction: "Rotterdam Centraal",
+      via: ["Hilversum", "Amsterdam Zuid"],
+    }),
+    // Beyond the two per direction, so it must not show up.
+    dep({
+      planned: "2026-06-01T08:33:00+02:00",
+      direction: "Amsterdam Centraal",
+      via: ["Hilversum", "Weesp", "Amsterdam C."],
+    }),
+  ];
+
+  const { message, headline, sections } = buildMorningMessage(departures);
+
+  assert.equal(headline, "🟡 Kleine vertraging");
+  assert.equal(sections.centraal, "Centraal: 07:33 IC Asd, 08:03 IC Asd");
+  assert.equal(sections.zuid, "Zuid: 07:41 +2 IC Shl, 08:11 IC Rtd");
+  assert.equal(
+    message,
+    "🟡 Kleine vertraging\nCentraal: 07:33 IC Asd, 08:03 IC Asd\nZuid: 07:41 +2 IC Shl, 08:11 IC Rtd"
+  );
+});
+
+test("buildMorningMessage: falls back to a plain next-departures line", () => {
+  const departures = [
+    dep({ planned: "2026-06-01T07:33:00+02:00", direction: "Zwolle", via: ["Amersfoort Vathorst"] }),
+    dep({ planned: "2026-06-01T07:48:00+02:00", direction: "Groningen", via: ["Zwolle"] }),
+    dep({ planned: "2026-06-01T08:03:00+02:00", direction: "Zwolle", via: ["Amersfoort Vathorst"] }),
+  ];
+
+  const { message, sections } = buildMorningMessage(departures);
+
+  assert.equal(sections.next, "07:33 IC Zl, 07:48 IC Gn");
+  assert.equal(message, "🟢 Op tijd\n07:33 IC Zl, 07:48 IC Gn");
+});
+
+// The Zuid intercities and the Schothorst trains that turn into them.
+function morningBoard() {
+  return [
+    dep({
+      planned: "2026-06-01T07:20:00+02:00",
+      direction: "Amersfoort Schothorst",
+    }),
+    dep({
+      planned: "2026-06-01T07:33:00+02:00",
+      direction: "Amsterdam Centraal",
+      via: ["Hilversum", "Weesp", "Amsterdam C."],
+    }),
+    dep({
+      planned: "2026-06-01T07:41:00+02:00",
+      actual: "2026-06-01T07:43:00+02:00",
+      direction: "Schiphol Airport",
+      via: ["Hilversum", "Amsterdam Zuid"],
+    }),
+    dep({
+      planned: "2026-06-01T07:50:00+02:00",
+      direction: "Amersfoort Schothorst",
+    }),
+    dep({
+      planned: "2026-06-01T08:03:00+02:00",
+      direction: "Amsterdam Centraal",
+      via: ["Hilversum", "Weesp", "Amsterdam C."],
+    }),
+    dep({
+      planned: "2026-06-01T08:11:00+02:00",
+      direction: "Rotterdam Centraal",
+      via: ["Hilversum", "Amsterdam Zuid"],
+    }),
+  ];
+}
+
+// The via-Hilversum selection the route hands to buildMorningMessage.
+function viaHilversum(board) {
+  return board.filter((d) =>
+    (d.routeStations || []).some((rs) => rs.mediumName === "Hilversum")
+  );
+}
+
+test("buildMorningMessage: a delayed feeder shows as (Amfs: +x) on the Zuid train", () => {
+  const board = morningBoard();
+  board[0].actualDateTime = "2026-06-01T07:30:00+02:00"; // 07:20 feeder, +10
+  board[3].actualDateTime = "2026-06-01T07:53:00+02:00"; // 07:50 feeder, +3
+
+  const { message, sections } = buildMorningMessage(viaHilversum(board), board);
+
+  // Only the +10 feeder is worth showing; +3 stays invisible.
+  assert.equal(sections.zuid, "Zuid: 07:41 +2 IC Shl (Amfs: +10), 08:11 IC Rtd");
+  assert.equal(
+    message,
+    "🟡 Kleine vertraging\nCentraal: 07:33 IC Asd, 08:03 IC Asd\nZuid: 07:41 +2 IC Shl (Amfs: +10), 08:11 IC Rtd"
+  );
+});
+
+test("buildMorningMessage: on-time feeders stay out of the output", () => {
+  const board = morningBoard();
+  const { sections } = buildMorningMessage(viaHilversum(board), board);
+  assert.equal(sections.zuid, "Zuid: 07:41 +2 IC Shl, 08:11 IC Rtd");
+});
+
+test("feederNote: threshold, cancellation and the matching window", () => {
+  const zuid = dep({
+    planned: "2026-06-01T07:41:00+02:00",
+    direction: "Schiphol Airport",
+    via: ["Hilversum", "Amsterdam Zuid"],
+  });
+  const feeder = (opts) =>
+    dep({ planned: "2026-06-01T07:20:00+02:00", direction: "Amersfoort Schothorst", ...opts });
+
+  assert.equal(feederNote(zuid, [feeder({ actual: "2026-06-01T07:24:00+02:00" })]), "");
+  assert.equal(
+    feederNote(zuid, [feeder({ actual: "2026-06-01T07:25:00+02:00" })]),
+    " (Amfs: +5)"
+  );
+  // A cancelled feeder leg means NS turned the train at Amersfoort Centraal to
+  // protect the Zuid departure, so it is not a warning.
+  assert.equal(feederNote(zuid, [feeder({ cancelled: true })]), "");
+  assert.equal(
+    feederNote(zuid, [feeder({ cancelled: true, actual: "2026-06-01T07:35:00+02:00" })]),
+    ""
+  );
+
+  // Too far ahead of the Zuid train to be the one that turns into it.
+  const early = dep({
+    planned: "2026-06-01T07:00:00+02:00",
+    actual: "2026-06-01T07:15:00+02:00",
+    direction: "Amersfoort Schothorst",
+  });
+  assert.equal(feederNote(zuid, [early]), "");
+
+  // With two candidates in the window, the closest one wins.
+  const far = dep({
+    planned: "2026-06-01T07:15:00+02:00",
+    actual: "2026-06-01T07:30:00+02:00",
+    direction: "Amersfoort Schothorst",
+  });
+  const near = feeder({ actual: "2026-06-01T07:27:00+02:00" });
+  assert.equal(feederNote(zuid, [far, near]), " (Amfs: +7)");
 });
