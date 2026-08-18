@@ -414,12 +414,56 @@ function buildReturnMessage(haarlem, asd, asdz) {
   };
 }
 
+// Each intercity to Amsterdam Zuid first runs out to Amersfoort Schothorst and
+// turns there, so a delay on that feeder (usually the :20 and :50 departures)
+// lands on the Zuid train even while NS still reports it as on time. Only a
+// real delay is worth the extra ink, hence the 5-minute floor.
+const FEEDER_DIRECTION = "Amersfoort Schothorst";
+const FEEDER_MIN_DELAY = 5;
+// How long before the Zuid departure the feeder leaves: ~15-20 minutes in the
+// timetable, with slack on both sides so a shifted departure still matches.
+const FEEDER_WINDOW_MIN = 8;
+const FEEDER_WINDOW_MAX = 30;
+
+// The Schothorst departure that turns into this Zuid train: the latest one
+// leaving inside the window before it.
+function findFeeder(dep, feeders) {
+  const target = new Date(dep.plannedDateTime).getTime();
+  let best = null;
+  let bestGap = Infinity;
+  for (const f of feeders) {
+    if (f.product?.type === "BUS") continue;
+    if (normalizeStation(f.direction) !== normalizeStation(FEEDER_DIRECTION)) continue;
+    const gap = (target - new Date(f.plannedDateTime).getTime()) / 60000;
+    if (gap < FEEDER_WINDOW_MIN || gap > FEEDER_WINDOW_MAX) continue;
+    if (gap < bestGap) {
+      best = f;
+      bestGap = gap;
+    }
+  }
+  return best;
+}
+
+// Suffix for a Zuid departure whose feeder is in trouble: " (Amfs: +10)", or
+// " (Amfs: ✕)" when it is cancelled outright. Empty when all is well, so an
+// undelayed feeder stays invisible.
+function feederNote(dep, feeders) {
+  const feeder = findFeeder(dep, feeders);
+  if (!feeder) return "";
+  const { delay_minutes, cancelled } = describeDeparture(feeder);
+  if (cancelled) return " (Amfs: ✕)";
+  if (delay_minutes >= FEEDER_MIN_DELAY) return ` (Amfs: +${delay_minutes})`;
+  return "";
+}
+
 // Before 13:00: the outbound glance. The intercities via Hilversum split into
 // two directions — those calling at Amsterdam Centraal and those calling at
 // Amsterdam Zuid — so show the next `count` of each instead of just the next
 // train per direction, mirroring the return-trip overview. `departures` is
-// already filtered (no buses, no sprinters, via-station applied) by the caller.
-function buildMorningMessage(departures, count = 2) {
+// already filtered (no buses, no sprinters, via-station applied) by the caller;
+// `feeders` is the unfiltered board, since the Schothorst trains feeding the
+// Zuid departures are filtered out of `departures` by the via-station rule.
+function buildMorningMessage(departures, feeders = [], count = 2) {
   const centraal = selectIntercityVia(departures, "Amsterdam C.", count);
   const zuid = selectIntercityVia(departures, "Amsterdam Zuid", count);
 
@@ -434,7 +478,14 @@ function buildMorningMessage(departures, count = 2) {
 
   const headline = statusHeadline([...centraal, ...zuid]);
   const centraalMsg = intercityVia(departures, "Amsterdam C.", "Centraal", count);
-  const zuidMsg = intercityVia(departures, "Amsterdam Zuid", "Zuid", count);
+  // The Zuid line carries the feeder note, so it is built here rather than by
+  // the plain intercityVia the Centraal line and the return trip use.
+  const zuidTrains = zuid.map(
+    (d) => `${describeDeparture(d).message}${feederNote(d, feeders)}`
+  );
+  const zuidMsg = `Zuid: ${
+    zuidTrains.length ? zuidTrains.join(", ") : "geen IC via Amsterdam Zuid"
+  }`;
 
   return {
     message: [headline, centraalMsg, zuidMsg].join("\n"),
@@ -475,9 +526,9 @@ app.get("/api/first-intercity", async (req, res) => {
       return await handleReturnTrip(res);
     }
 
-    let departures = await fetchDepartures(station);
+    const board = await fetchDepartures(station);
 
-    departures = departures.filter((d) => d.product?.type !== "BUS");
+    let departures = board.filter((d) => d.product?.type !== "BUS");
     departures = departures.filter((d) => !isSprinter(d.product?.shortCategoryName));
     if (viaFilter) {
       departures = departures.filter((d) => viaMatches(d, viaFilter));
@@ -499,7 +550,7 @@ app.get("/api/first-intercity", async (req, res) => {
 
     // Same colour-dotted headline as the return overview, so the morning
     // glance also leads with the overall delay status.
-    const { message: body, headline, sections } = buildMorningMessage(departures);
+    const { message: body, headline, sections } = buildMorningMessage(departures, board);
     const message = withTestStatus(body);
 
     res.json({
@@ -556,6 +607,7 @@ module.exports = {
   statusHeadline,
   buildReturnMessage,
   buildMorningMessage,
+  feederNote,
   describeDeparture,
   shortenCategory,
   withTestStatus,
